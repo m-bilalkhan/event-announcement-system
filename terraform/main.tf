@@ -98,9 +98,9 @@ data "aws_iam_policy_document" "this" {
 }
 
 #----------------------------
-# IAM - Assuming role for Lambda execution
+# IAM - Subscriber - Assuming role for Lambda execution
 #----------------------------
-resource "aws_iam_role" "this" {
+resource "aws_iam_role" "subscriber" {
   name               = "lambda_subscribe_role"
   assume_role_policy = data.aws_iam_policy_document.this.json
   tags = {
@@ -109,18 +109,18 @@ resource "aws_iam_role" "this" {
 }
 
 #----------------------------
-# IAM - Attach required managed policy - Basic Lambda Execution
+# IAM - Subscriber - Attach required managed policy - Basic Lambda Execution
 #----------------------------
 resource "aws_iam_role_policy_attachment" "lambda_basic_execution" {
-  role       = aws_iam_role.this.name
+  role       = aws_iam_role.subscriber.name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
 }
 
 #----------------------------
-# IAM - Attach required managed policy - SNS Full Access
+# IAM - Subscriber - Attach required managed policy - SNS Full Access
 #----------------------------
 resource "aws_iam_role_policy_attachment" "lambda_sns_access" {
-  role       = aws_iam_role.this.name
+  role       = aws_iam_role.subscriber.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonSNSFullAccess"
 }
 
@@ -134,12 +134,12 @@ data "archive_file" "this" {
 }
 
 #----------------------------
-# Lambda - Function
+# Lambda - Subscriber - Function
 #----------------------------
-resource "aws_lambda_function" "this" {
+resource "aws_lambda_function" "subscriber-function" {
   filename         = data.archive_file.this.output_path
   function_name    = "SubscribeToSNSFunction"
-  role             = aws_iam_role.this.arn
+  role             = aws_iam_role.subscriber.arn
   handler          = "lambda_function.lambda_handler"
   source_code_hash = data.archive_file.this.output_base64sha256
   publish          = true
@@ -156,4 +156,159 @@ resource "aws_lambda_function" "this" {
   tags = {
     ProjectName = var.ProjectName
   }
+}
+
+#----------------------------
+# Lambda - API Gateway Invoke Permission
+#----------------------------
+resource "aws_lambda_permission" "allow_apigw" {
+  depends_on    = [aws_apigatewayv2_api.this]
+  statement_id  = "AllowExecutionFromAPIGateway"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.subscriber-function.function_name
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "arn:aws:execute-api:ap-south-1:${data.aws_caller_identity.current.account_id}:${aws_apigatewayv2_api.this.id}/*"
+}
+
+#----------------------------
+# IAM - Publisher - Assuming role for Lambda execution
+#----------------------------
+resource "aws_iam_role" "publisher" {
+  name               = "lambda_publisher_role"
+  assume_role_policy = data.aws_iam_policy_document.this.json
+  tags = {
+    ProjectName = var.ProjectName
+  }
+}
+
+#----------------------------
+# IAM - Publisher - Attach required managed policy - Basic Lambda Execution
+#----------------------------
+resource "aws_iam_role_policy_attachment" "lambda_basic_execution" {
+  role       = aws_iam_role.publisher.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+}
+
+#----------------------------
+# IAM - Publisher - Attach required managed policy - SNS Full Access
+#----------------------------
+resource "aws_iam_role_policy_attachment" "lambda_sns_access" {
+  role       = aws_iam_role.publisher.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSNSFullAccess"
+}
+
+#----------------------------
+# IAM - Publisher - Attach required managed policy - SNS Full Access
+#----------------------------
+resource "aws_iam_role_policy_attachment" "lambda_s3_access" {
+  role       = aws_iam_role.publisher.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonS3FullAccess"
+}
+
+#----------------------------
+# Packing the Lambda function code
+#----------------------------
+data "archive_file" "pub" {
+  type        = "zip"
+  source_file = "../backend/publisher_function.py"
+  output_path = "${path.module}/lambda/function.zip"
+}
+
+#----------------------------
+# Lambda - Publisher - Function
+#----------------------------
+resource "aws_lambda_function" "publisher-function" {
+  filename         = data.archive_file.pub.output_path
+  function_name    = "PublishToSNSFunction"
+  role             = aws_iam_role.publisher.arn
+  handler          = "lambda_function.lambda_handler"
+  source_code_hash = data.archive_file.pub.output_base64sha256
+  publish          = true
+  timeout          = 20
+
+  runtime = "python3.13"
+
+  environment {
+    variables = {
+      SNS_TOPIC_ARN = aws_sns_topic.this.arn
+      S3_BUCKET_NAME = aws_s3_bucket.this.bucket
+    }
+  }
+
+  tags = {
+    ProjectName = var.ProjectName
+  }
+}
+
+#----------------------------
+# Lambda - API Gateway Invoke Permission
+#----------------------------
+resource "aws_lambda_permission" "allow_apigw" {
+  depends_on    = [aws_apigatewayv2_api.this]
+  statement_id  = "AllowExecutionFromAPIGateway"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.publisher-function.function_name
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "arn:aws:execute-api:ap-south-1:${data.aws_caller_identity.current.account_id}:${aws_apigatewayv2_api.this.id}/*"
+}
+
+#----------------------------
+# API Gateway
+#----------------------------
+resource "aws_apigatewayv2_api" "this" {
+  name          = "EventManagementAPI"
+  protocol_type = "HTTP"
+  description = "API Gateway for Event Announcement System"
+  tags = {
+    ProjectName = var.ProjectName
+  }
+}
+
+#----------------------------
+# API Gateway - Integration for Subscriber Lambda
+#----------------------------
+resource "aws_apigatewayv2_integration" "subscriber_integration" {
+  api_id             = aws_apigatewayv2_api.this.id
+  integration_type = "AWS_PROXY"
+
+  integration_method        = "POST"
+  integration_uri           = aws_lambda_function.subscriber-function.invoke_arn  
+}
+
+#----------------------------
+# API Gateway - Route for Publisher Lambda
+#----------------------------
+resource "aws_apigatewayv2_integration" "publisher_integration" {
+  api_id             = aws_apigatewayv2_api.this.id
+  integration_type = "AWS_PROXY"
+
+  integration_method        = "POST"
+  integration_uri           = aws_lambda_function.publisher-function.invoke_arn  
+}
+
+#----------------------------
+# API Gateway - Route for Subscriber Lambda
+#----------------------------
+resource "aws_apigatewayv2_route" "subscriber_route" {
+  api_id    = aws_apigatewayv2_api.this.id
+  route_key = "POST /subscribe-event"
+  target    = "integrations/${aws_apigatewayv2_integration.subscriber_integration.id}"
+} 
+
+#----------------------------
+# API Gateway - Route for Publisher Lambda
+#----------------------------
+resource "aws_apigatewayv2_route" "publisher_route" {
+  api_id    = aws_apigatewayv2_api.this.id
+  route_key = "POST /publish-event"
+  target    = "integrations/${aws_apigatewayv2_integration.publisher_integration.id}"
+} 
+
+#----------------------------
+# API Gateway - Staging
+#----------------------------
+resource "aws_apigatewayv2_stage" "this" {
+  api_id      = aws_apigatewayv2_api.this.id
+  name        = "$default"
+  auto_deploy = true
 }
