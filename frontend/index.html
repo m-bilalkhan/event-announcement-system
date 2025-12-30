@@ -425,7 +425,7 @@
 
             try {
                 // Replace with your actual API endpoint
-                const response = await fetch('<YOUR_CREATE_EVENT_API_ENDPOINT>', {
+                const response = await fetch('<YOUR_API_ENDPOINT>/publish-event', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(newEvent)
@@ -465,7 +465,7 @@
 
             try {
                 // Replace with your actual API endpoint
-                const response = await fetch('<YOUR_SUBSCRIBE_API_ENDPOINT>', {
+                const response = await fetch('<YOUR_API_ENDPOINT>/subscribe-event', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ email })

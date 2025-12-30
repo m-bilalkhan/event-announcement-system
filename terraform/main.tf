@@ -312,3 +312,10 @@ resource "aws_apigatewayv2_stage" "this" {
   name        = "$default"
   auto_deploy = true
 }
+
+#----------------------------
+# Outputs
+#----------------------------
+output "api_endpoint" {
+  value = aws_apigatewayv2_api.this.api_endpoint
+}
