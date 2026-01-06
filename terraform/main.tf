@@ -10,7 +10,7 @@ variable "ProjectName" {
 resource "aws_s3_bucket" "this" {
   bucket = "event-announcement-system-bucket"
   tags = {
-    Name = "Event Announcement System Bucket"
+    Name        = "Event Announcement System Bucket"
     ProjectName = var.ProjectName
   }
 }
@@ -111,7 +111,7 @@ resource "aws_iam_role" "subscriber" {
 #----------------------------
 # IAM - Subscriber - Attach required managed policy - Basic Lambda Execution
 #----------------------------
-resource "aws_iam_role_policy_attachment" "lambda_basic_execution" {
+resource "aws_iam_role_policy_attachment" "lambda_basic_execution_subscriber" {
   role       = aws_iam_role.subscriber.name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
 }
@@ -119,7 +119,7 @@ resource "aws_iam_role_policy_attachment" "lambda_basic_execution" {
 #----------------------------
 # IAM - Subscriber - Attach required managed policy - SNS Full Access
 #----------------------------
-resource "aws_iam_role_policy_attachment" "lambda_sns_access" {
+resource "aws_iam_role_policy_attachment" "lambda_sns_access_subscriber" {
   role       = aws_iam_role.subscriber.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonSNSFullAccess"
 }
@@ -130,7 +130,7 @@ resource "aws_iam_role_policy_attachment" "lambda_sns_access" {
 data "archive_file" "this" {
   type        = "zip"
   source_file = "../backend/subscriber_function.py"
-  output_path = "${path.module}/lambda/function.zip"
+  output_path = "${path.module}/lambda/sub_function.zip"
 }
 
 #----------------------------
@@ -140,7 +140,7 @@ resource "aws_lambda_function" "subscriber-function" {
   filename         = data.archive_file.this.output_path
   function_name    = "SubscribeToSNSFunction"
   role             = aws_iam_role.subscriber.arn
-  handler          = "lambda_function.lambda_handler"
+  handler          = "subscriber_function.lambda_handler"
   source_code_hash = data.archive_file.this.output_base64sha256
   publish          = true
   timeout          = 20
@@ -161,7 +161,7 @@ resource "aws_lambda_function" "subscriber-function" {
 #----------------------------
 # Lambda - API Gateway Invoke Permission
 #----------------------------
-resource "aws_lambda_permission" "allow_apigw" {
+resource "aws_lambda_permission" "allow_apigw_subscriber" {
   depends_on    = [aws_apigatewayv2_api.this]
   statement_id  = "AllowExecutionFromAPIGateway"
   action        = "lambda:InvokeFunction"
@@ -184,7 +184,7 @@ resource "aws_iam_role" "publisher" {
 #----------------------------
 # IAM - Publisher - Attach required managed policy - Basic Lambda Execution
 #----------------------------
-resource "aws_iam_role_policy_attachment" "lambda_basic_execution" {
+resource "aws_iam_role_policy_attachment" "lambda_basic_execution_publisher" {
   role       = aws_iam_role.publisher.name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
 }
@@ -192,7 +192,7 @@ resource "aws_iam_role_policy_attachment" "lambda_basic_execution" {
 #----------------------------
 # IAM - Publisher - Attach required managed policy - SNS Full Access
 #----------------------------
-resource "aws_iam_role_policy_attachment" "lambda_sns_access" {
+resource "aws_iam_role_policy_attachment" "lambda_sns_access_publisher" {
   role       = aws_iam_role.publisher.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonSNSFullAccess"
 }
@@ -211,7 +211,7 @@ resource "aws_iam_role_policy_attachment" "lambda_s3_access" {
 data "archive_file" "pub" {
   type        = "zip"
   source_file = "../backend/publisher_function.py"
-  output_path = "${path.module}/lambda/function.zip"
+  output_path = "${path.module}/lambda/pub_function.zip"
 }
 
 #----------------------------
@@ -221,7 +221,7 @@ resource "aws_lambda_function" "publisher-function" {
   filename         = data.archive_file.pub.output_path
   function_name    = "PublishToSNSFunction"
   role             = aws_iam_role.publisher.arn
-  handler          = "lambda_function.lambda_handler"
+  handler          = "publisher_function.lambda_handler"
   source_code_hash = data.archive_file.pub.output_base64sha256
   publish          = true
   timeout          = 20
@@ -230,7 +230,7 @@ resource "aws_lambda_function" "publisher-function" {
 
   environment {
     variables = {
-      SNS_TOPIC_ARN = aws_sns_topic.this.arn
+      SNS_TOPIC_ARN  = aws_sns_topic.this.arn
       S3_BUCKET_NAME = aws_s3_bucket.this.bucket
     }
   }
@@ -243,7 +243,7 @@ resource "aws_lambda_function" "publisher-function" {
 #----------------------------
 # Lambda - API Gateway Invoke Permission
 #----------------------------
-resource "aws_lambda_permission" "allow_apigw" {
+resource "aws_lambda_permission" "allow_apigw_publisher" {
   depends_on    = [aws_apigatewayv2_api.this]
   statement_id  = "AllowExecutionFromAPIGateway"
   action        = "lambda:InvokeFunction"
@@ -258,7 +258,15 @@ resource "aws_lambda_permission" "allow_apigw" {
 resource "aws_apigatewayv2_api" "this" {
   name          = "EventManagementAPI"
   protocol_type = "HTTP"
-  description = "API Gateway for Event Announcement System"
+  description   = "API Gateway for Event Announcement System"
+  cors_configuration {
+    allow_headers = ["Content-Type"]
+    allow_methods = ["POST"]
+    allow_origins = ["*"]
+    expose_headers = ["*"]
+    max_age       = 3600
+  }
+
   tags = {
     ProjectName = var.ProjectName
   }
@@ -268,22 +276,22 @@ resource "aws_apigatewayv2_api" "this" {
 # API Gateway - Integration for Subscriber Lambda
 #----------------------------
 resource "aws_apigatewayv2_integration" "subscriber_integration" {
-  api_id             = aws_apigatewayv2_api.this.id
+  api_id           = aws_apigatewayv2_api.this.id
   integration_type = "AWS_PROXY"
 
-  integration_method        = "POST"
-  integration_uri           = aws_lambda_function.subscriber-function.invoke_arn  
+  integration_method = "POST"
+  integration_uri    = aws_lambda_function.subscriber-function.invoke_arn
 }
 
 #----------------------------
 # API Gateway - Route for Publisher Lambda
 #----------------------------
 resource "aws_apigatewayv2_integration" "publisher_integration" {
-  api_id             = aws_apigatewayv2_api.this.id
+  api_id           = aws_apigatewayv2_api.this.id
   integration_type = "AWS_PROXY"
 
-  integration_method        = "POST"
-  integration_uri           = aws_lambda_function.publisher-function.invoke_arn  
+  integration_method = "POST"
+  integration_uri    = aws_lambda_function.publisher-function.invoke_arn
 }
 
 #----------------------------
@@ -293,7 +301,7 @@ resource "aws_apigatewayv2_route" "subscriber_route" {
   api_id    = aws_apigatewayv2_api.this.id
   route_key = "POST /subscribe-event"
   target    = "integrations/${aws_apigatewayv2_integration.subscriber_integration.id}"
-} 
+}
 
 #----------------------------
 # API Gateway - Route for Publisher Lambda
@@ -302,7 +310,7 @@ resource "aws_apigatewayv2_route" "publisher_route" {
   api_id    = aws_apigatewayv2_api.this.id
   route_key = "POST /publish-event"
   target    = "integrations/${aws_apigatewayv2_integration.publisher_integration.id}"
-} 
+}
 
 #----------------------------
 # API Gateway - Staging
