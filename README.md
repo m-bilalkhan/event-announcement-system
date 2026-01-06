@@ -7,8 +7,11 @@ A serverless event management platform built on AWS that enables users to create
 ![Architecture Diagram](architecture-diagram.png)
 *Serverless architecture leveraging AWS services for scalable event management*
 
-![Live Application](app-screenshot.png)
+![Live Application](app-ss.png)
 *Clean, intuitive interface for event discovery and subscription*
+
+![Notification Recieved](email-notification.png)
+*ScreenShot, Of Notification*
 
 ## 🚀 Features
 
